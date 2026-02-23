@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from src.domain_logic import get_profile
+
 PROJECT = "water-network-pressure-anomaly-ai"
 TITLE = "Water Network Pressure Anomaly AI"
 DOMAIN = "iot"
@@ -10,7 +12,8 @@ TTE_DAYS = 5
 EXPOSURE_SCORE = 7
 WAVE = 2
 PRIORITY_SCORE = 6.20
-RISK_FOCUS = "device trust, telemetry integrity, and fleet resilience"
+
+profile = get_profile(DOMAIN)
 
 
 class ExposureRequest(BaseModel):
@@ -19,14 +22,9 @@ class ExposureRequest(BaseModel):
     constraints: list[str] = Field(default_factory=list)
 
 
-class ExposureResponse(BaseModel):
-    project: str
-    launch_window: str
-    risk_level: str
-    priority_score: float
-    channel_plan: list[str]
-    actions: list[str]
-    generated_at: str
+class VerticalSignalRequest(BaseModel):
+    incident_severity: str = Field(default="medium")
+    observed_signals: list[str] = Field(default_factory=list)
 
 
 def _risk_level(priority_score: float, tte_days: int) -> str:
@@ -37,15 +35,15 @@ def _risk_level(priority_score: float, tte_days: int) -> str:
     return "standard"
 
 
-def _actions(risk_level: str) -> list[str]:
-    if risk_level == "high-urgency":
-        return ["ship-demo-48h", "publish-thread", "collect-signal-review"]
-    if risk_level == "priority":
-        return ["ship-demo-7d", "post-technical-writeup", "track-conversion-signals"]
-    return ["prepare-mvp", "document-roadmap"]
+def _launch_window(tte_days: int) -> str:
+    if tte_days <= 2:
+        return "within-24h"
+    if tte_days <= 3:
+        return "within-48h"
+    return "within-7d"
 
 
-app = FastAPI(title=PROJECT, version="0.2.0")
+app = FastAPI(title=PROJECT, version="0.3.0")
 
 
 @app.get("/health")
@@ -64,20 +62,36 @@ def meta() -> dict[str, object]:
         "exposure_score": EXPOSURE_SCORE,
         "wave": WAVE,
         "priority_score": PRIORITY_SCORE,
-        "risk_focus": RISK_FOCUS,
+        "key_metric": profile.key_metric,
+        "controls": profile.controls,
     }
 
 
-@app.post("/v1/exposure-plan", response_model=ExposureResponse)
-def exposure_plan(payload: ExposureRequest) -> ExposureResponse:
+@app.post("/v1/exposure-plan")
+def exposure_plan(payload: ExposureRequest) -> dict[str, object]:
     level = _risk_level(PRIORITY_SCORE, TTE_DAYS)
-    window = "within-48h" if TTE_DAYS <= 3 else "within-7d"
-    return ExposureResponse(
-        project=PROJECT,
-        launch_window=window,
-        risk_level=level,
-        priority_score=PRIORITY_SCORE,
-        channel_plan=payload.channels,
-        actions=_actions(level),
-        generated_at=datetime.now(timezone.utc).isoformat(),
-    )
+    return {
+        "project": PROJECT,
+        "risk_level": level,
+        "launch_window": _launch_window(TTE_DAYS),
+        "channels": payload.channels,
+        "objective": payload.objective,
+        "actions": profile.default_actions,
+        "demo_assets": profile.demo_assets,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.post("/v1/vertical-signal")
+def vertical_signal(payload: VerticalSignalRequest) -> dict[str, object]:
+    confidence = min(0.95, 0.45 + (len(payload.observed_signals) * 0.08))
+    return {
+        "project": PROJECT,
+        "domain": DOMAIN,
+        "incident_severity": payload.incident_severity,
+        "signal_count": len(payload.observed_signals),
+        "confidence": round(confidence, 2),
+        "key_metric": profile.key_metric,
+        "recommended_controls": profile.controls,
+        "next_actions": profile.default_actions,
+    }
